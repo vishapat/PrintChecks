@@ -16,7 +16,7 @@ export default tseslint.config(
         },
     },
     {
-        ignores: ['**/dist/**', '**/node_modules/**', '**/expanded_fonts.js', 'docs/.vitepress/cache/**'],
+        ignores: ['**/dist/**', '**/node_modules/**', '**/expanded_fonts.js', 'docs/.vitepress/cache/**', '**/src-tauri/target/**'],
     },
     {
         rules: {

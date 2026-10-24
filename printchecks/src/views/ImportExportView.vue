@@ -9,7 +9,12 @@
         <h5 class="mb-0">🔐 Encryption Settings</h5>
       </div>
       <div class="card-body">
-        <div class="form-check mb-3">
+        <div v-if="nativeVault" class="alert alert-info mb-0">
+          <strong>🔒 Native vault active</strong><br />
+          Your sensitive data is encrypted in the local PrintChecks vault. It cannot be disabled
+          from this screen; export backups remain a separate choice below.
+        </div>
+        <div v-else class="form-check mb-3">
           <input
             class="form-check-input"
             type="checkbox"
@@ -26,7 +31,7 @@
           </small>
         </div>
 
-        <div v-if="encryptionEnabled" class="alert alert-info">
+        <div v-if="!nativeVault && encryptionEnabled" class="alert alert-info">
           <strong>🔒 Encryption Active</strong><br />
           After 5 minutes of inactivity, you'll be prompted to keep your session active (60 second
           timeout).
@@ -36,7 +41,7 @@
           </button>
         </div>
 
-        <div v-if="!encryptionEnabled" class="alert alert-secondary">
+        <div v-if="!nativeVault && !encryptionEnabled" class="alert alert-secondary">
           <strong>ℹ️ Encryption Disabled</strong><br />
           Your data is not encrypted. Anyone with access to this browser can view your check data.
         </div>
@@ -78,7 +83,22 @@
         <div class="card">
           <div class="card-body">
             <h5>Export Your Data</h5>
-            <p>Download a backup of all your check data, receipts, and payment records.</p>
+            <p>Choose the records to include in a backup.</p>
+
+            <div class="mb-3" aria-label="Export data selection">
+              <strong class="d-block mb-2">Include in export</strong>
+              <div v-for="category in dataCategories" :key="category.key" class="form-check">
+                <input
+                  :id="`export-${category.key}`"
+                  v-model="exportSelections[category.key]"
+                  class="form-check-input"
+                  type="checkbox"
+                />
+                <label class="form-check-label" :for="`export-${category.key}`">
+                  {{ category.label }} ({{ category.count }} {{ category.count === 1 ? 'record' : 'records' }})
+                </label>
+              </div>
+            </div>
 
             <div class="form-check mb-3">
               <input
@@ -109,15 +129,15 @@
             <div class="alert alert-info">
               <strong>Export includes:</strong>
               <ul class="mb-0">
-                <li>{{ checksCount }} checks</li>
-                <li>{{ receiptsCount }} receipts</li>
-                <li>{{ paymentsCount }} payment records</li>
-                <li>{{ vendorsCount }} vendors</li>
-                <li>{{ bankAccountsCount }} bank accounts</li>
+                <li v-if="exportSelections.checks">{{ checksCount }} checks</li>
+                <li v-if="exportSelections.receipts">{{ receiptsCount }} receipts</li>
+                <li v-if="exportSelections.payments">{{ paymentsCount }} payment records</li>
+                <li v-if="exportSelections.vendors">{{ vendorsCount }} vendors</li>
+                <li v-if="exportSelections.bankAccounts">{{ bankAccountsCount }} bank accounts</li>
               </ul>
             </div>
 
-            <button class="btn btn-primary" @click="exportData" :disabled="exporting">
+            <button class="btn btn-primary" @click="exportData" :disabled="exporting || !hasExportSelection">
               <span v-if="exporting">
                 <span class="spinner-border spinner-border-sm me-2"></span>
                 Exporting...
@@ -140,7 +160,7 @@
             <p>Restore data from a previous export file.</p>
 
             <div class="alert alert-warning">
-              <strong>⚠️ Warning:</strong> Importing will replace ALL existing data. Consider
+              <strong>⚠️ Warning:</strong> Importing replaces only the selected categories. Consider
               exporting your current data first as a backup.
             </div>
 
@@ -167,6 +187,22 @@
               <small class="text-muted">This file is encrypted and requires a password</small>
             </div>
 
+            <div v-if="selectedFile" class="mb-3" aria-label="Import data selection">
+              <strong class="d-block mb-2">Import these categories</strong>
+              <div v-for="category in dataCategories" :key="category.key" class="form-check">
+                <input
+                  :id="`import-${category.key}`"
+                  v-model="importSelections[category.key]"
+                  class="form-check-input"
+                  type="checkbox"
+                  :disabled="!availableImportCategories[category.key]"
+                />
+                <label class="form-check-label" :for="`import-${category.key}`">
+                  {{ category.label }}
+                </label>
+              </div>
+            </div>
+
             <div v-if="importPreview" class="alert alert-info">
               <strong>Import Preview:</strong>
               <ul class="mb-0">
@@ -181,7 +217,7 @@
             <button
               class="btn btn-success"
               @click="importData"
-              :disabled="!selectedFile || importing"
+              :disabled="!selectedFile || importing || !hasImportSelection"
             >
               <span v-if="importing">
                 <span class="spinner-border spinner-border-sm me-2"></span>
@@ -210,12 +246,25 @@ import type { CheckData, ReceiptData, PaymentRecord, Vendor, BankAccount } from 
 
 // Encryption state
 const encryptionEnabled = ref(false)
+// The optional call preserves compatibility with the existing test double and
+// with integrations that provide only the browser storage interface.
+const nativeVault = computed(() => secureStorage.usesNativeVault?.() ?? false)
 
 // Export state
 const exportEncrypted = ref(false)
 const exportPassword = ref('')
 const exporting = ref(false)
 const exportSuccess = ref(false)
+type DataCategory = 'checks' | 'receipts' | 'payments' | 'vendors' | 'bankAccounts'
+type DataSelections = Record<DataCategory, boolean>
+const allCategories = (): DataSelections => ({
+  checks: true,
+  receipts: true,
+  payments: true,
+  vendors: true,
+  bankAccounts: true
+})
+const exportSelections = ref<DataSelections>(allCategories())
 
 // Import state
 const selectedFile = ref<File | null>(null)
@@ -224,6 +273,8 @@ const importPassword = ref('')
 const importing = ref(false)
 const importSuccess = ref(false)
 const importError = ref('')
+const importSelections = ref<DataSelections>(allCategories())
+const availableImportCategories = ref<DataSelections>(allCategories())
 interface ImportPreview {
   checks: number
   receipts: number
@@ -246,10 +297,19 @@ const receiptsCount = computed(() => receipts.value.length)
 const paymentsCount = computed(() => payments.value.length)
 const vendorsCount = computed(() => vendors.value.length)
 const bankAccountsCount = computed(() => bankAccounts.value.length)
+const dataCategories = computed(() => [
+  { key: 'checks' as const, label: 'Checks', count: checksCount.value },
+  { key: 'receipts' as const, label: 'Receipts', count: receiptsCount.value },
+  { key: 'payments' as const, label: 'Payment records', count: paymentsCount.value },
+  { key: 'vendors' as const, label: 'Vendors', count: vendorsCount.value },
+  { key: 'bankAccounts' as const, label: 'Bank accounts', count: bankAccountsCount.value }
+])
+const hasExportSelection = computed(() => Object.values(exportSelections.value).some(Boolean))
+const hasImportSelection = computed(() => Object.values(importSelections.value).some(Boolean))
 
 onMounted(async () => {
   // Check if encryption is enabled
-  encryptionEnabled.value = localStorage.getItem('encryption_enabled') === 'true'
+  encryptionEnabled.value = nativeVault.value || localStorage.getItem('encryption_enabled') === 'true'
 
   // Load all data from secure storage
   try {
@@ -408,17 +468,17 @@ async function exportData() {
     exporting.value = true
     exportSuccess.value = false
 
-    // Gather all data from refs (already loaded from secureStorage)
-    const exportData = {
+    const exportData: Record<string, unknown> = {
       version: '1.0',
       exportDate: new Date().toISOString(),
-      checks: checks.value,
-      receipts: receipts.value,
-      payments: payments.value,
-      vendors: vendors.value,
-      bankAccounts: bankAccounts.value,
+      categories: exportSelections.value,
       encrypted: exportEncrypted.value
     }
+    if (exportSelections.value.checks) exportData.checks = checks.value
+    if (exportSelections.value.receipts) exportData.receipts = receipts.value
+    if (exportSelections.value.payments) exportData.payments = payments.value
+    if (exportSelections.value.vendors) exportData.vendors = vendors.value
+    if (exportSelections.value.bankAccounts) exportData.bankAccounts = bankAccounts.value
 
     let dataToExport = exportData
 
@@ -462,6 +522,8 @@ async function onFileSelected(event: Event) {
   selectedFile.value = file
   importError.value = ''
   importPreview.value = null
+  importSelections.value = allCategories()
+  availableImportCategories.value = allCategories()
 
   try {
     const text = await file.text()
@@ -470,6 +532,22 @@ async function onFileSelected(event: Event) {
     // Try to parse preview (without decrypting if encrypted)
     if (!importFileEncrypted.value) {
       const data = JSON.parse(text)
+      if (
+        !data.categories &&
+        (!Array.isArray(data.checks) || !Array.isArray(data.receipts) || !Array.isArray(data.payments))
+      ) {
+        importError.value =
+          'Failed to import: this older backup is missing required data categories.'
+        importSelections.value = {
+          checks: false,
+          receipts: false,
+          payments: false,
+          vendors: false,
+          bankAccounts: false
+        }
+        return
+      }
+      updateImportCategories(data)
       importPreview.value = {
         checks: data.checks?.length || 0,
         receipts: data.receipts?.length || 0,
@@ -483,10 +561,29 @@ async function onFileSelected(event: Event) {
   }
 }
 
+function updateImportCategories(data: Record<string, unknown>, resetSelection = true) {
+  const savedCategories = data.categories as Partial<DataSelections> | undefined
+  const available = {} as DataSelections
+  for (const category of Object.keys(allCategories()) as DataCategory[]) {
+    available[category] = savedCategories
+      ? savedCategories[category] === true
+      : Array.isArray(data[category])
+  }
+  availableImportCategories.value = available
+  importSelections.value = resetSelection
+    ? { ...available }
+    : (Object.fromEntries(
+        (Object.keys(available) as DataCategory[]).map((category) => [
+          category,
+          importSelections.value[category] && available[category]
+        ])
+      ) as DataSelections)
+}
+
 async function importData() {
   if (!selectedFile.value) return
 
-  if (!confirm('⚠️ This will replace ALL existing data. Are you sure you want to continue?')) {
+  if (!confirm('⚠️ This will replace the selected data categories. Are you sure you want to continue?')) {
     return
   }
 
@@ -509,34 +606,39 @@ async function importData() {
       importedData = JSON.parse(text)
     }
 
-    // Validate data structure and types
-    if (!importedData.checks || !importedData.receipts || !importedData.payments) {
-      throw new Error('Invalid import file structure: missing required fields')
+    if (!importedData || typeof importedData !== 'object') {
+      throw new Error('Invalid import file format')
     }
+    const data = importedData as Record<string, unknown>
+    if (!data.categories) {
+      // Full backups created before selective export must retain their original
+      // required-field validation.
+      if (!Array.isArray(data.checks) || !Array.isArray(data.receipts) || !Array.isArray(data.payments)) {
+        throw new Error('Invalid import file format: checks, receipts, and payments must be arrays')
+      }
+      if (data.vendors && !Array.isArray(data.vendors)) {
+        throw new Error('Invalid import file format: vendors must be an array')
+      }
+      if (data.bankAccounts && !Array.isArray(data.bankAccounts)) {
+        throw new Error('Invalid import file format: bankAccounts must be an array')
+      }
+    }
+    updateImportCategories(data, false)
 
-    // Validate that required fields are arrays
-    if (
-      !Array.isArray(importedData.checks) ||
-      !Array.isArray(importedData.receipts) ||
-      !Array.isArray(importedData.payments)
-    ) {
-      throw new Error('Invalid import file format: checks, receipts, and payments must be arrays')
+    const storageKeys: Record<DataCategory, string> = {
+      checks: 'checkList',
+      receipts: 'printchecks_receipts',
+      payments: 'printchecks_payments',
+      vendors: 'vendors',
+      bankAccounts: 'bankAccounts'
     }
-
-    // Validate optional fields are arrays if present
-    if (importedData.vendors && !Array.isArray(importedData.vendors)) {
-      throw new Error('Invalid import file format: vendors must be an array')
+    for (const category of Object.keys(importSelections.value) as DataCategory[]) {
+      if (!importSelections.value[category]) continue
+      if (!Array.isArray(importedData[category])) {
+        throw new Error(`Invalid import file format: ${category} must be an array`)
+      }
+      await secureStorage.set(storageKeys[category], JSON.stringify(importedData[category]))
     }
-    if (importedData.bankAccounts && !Array.isArray(importedData.bankAccounts)) {
-      throw new Error('Invalid import file format: bankAccounts must be an array')
-    }
-
-    // Replace all data using secureStorage
-    await secureStorage.set('checkList', JSON.stringify(importedData.checks))
-    await secureStorage.set('printchecks_receipts', JSON.stringify(importedData.receipts))
-    await secureStorage.set('printchecks_payments', JSON.stringify(importedData.payments))
-    await secureStorage.set('vendors', JSON.stringify(importedData.vendors || []))
-    await secureStorage.set('bankAccounts', JSON.stringify(importedData.bankAccounts || []))
 
     importSuccess.value = true
     importing.value = false

@@ -1292,29 +1292,14 @@ export const useCustomizationStore = defineStore('useCustomizationStore', () => 
       }
     ]
 
-    // Load Google Fonts dynamically
-    loadGoogleFonts()
+    // This application is intentionally local-only. Web fonts are excluded because
+    // loading them would make external network requests; system fonts remain available.
+    availableFonts.value = availableFonts.value.filter((font) => !font.isWebFont)
   }
 
-  function loadGoogleFonts() {
-    const webFonts = availableFonts.value.filter((font) => font.isWebFont && font.url)
-    const existingLinks = document.querySelectorAll('link[data-font-loader]')
-
-    // Remove existing font links to avoid duplicates
-    existingLinks.forEach((link) => link.remove())
-
-    // Load each unique Google Font
-    const uniqueUrls = [...new Set(webFonts.map((font) => font.url))]
-    uniqueUrls.forEach((url) => {
-      if (url) {
-        const link = document.createElement('link')
-        link.rel = 'stylesheet'
-        link.href = url
-        link.setAttribute('data-font-loader', 'true')
-        document.head.appendChild(link)
-      }
-    })
-  }
+  // Retained as a public store action for backwards compatibility. Remote fonts
+  // are deliberately unavailable in the local-only application.
+  function loadGoogleFonts() {}
 
   function loadColorPalettes() {
     colorPalettes.value = [

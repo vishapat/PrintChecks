@@ -21,3 +21,9 @@ npm-debug.log*
 
 # Lock files (optional - some prefer to commit these)
 # pnpm-lock.yaml
+
+# PrintChecks desktop build output and private data
+printchecks/src-tauri/target/
+printchecks/src-tauri/gen/
+*.vault
+*.vault.*

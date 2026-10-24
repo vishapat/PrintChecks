@@ -25,6 +25,9 @@ vi.mock('@/services/secureStorage', () => ({
     set: vi.fn(),
     remove: vi.fn(),
     clear: vi.fn(),
+    usesNativeVault: vi.fn(() => false),
+    isNativeVaultUnlocked: vi.fn(() => false),
+    lockNativeVault: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -109,6 +112,9 @@ function withNoEncryption() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(secureStorage.usesNativeVault).mockReturnValue(false)
+  vi.mocked(secureStorage.isNativeVaultUnlocked).mockReturnValue(false)
+  vi.mocked(secureStorage.lockNativeVault).mockResolvedValue(undefined)
   // Reset captured handlers
   Object.keys(windowHandlers).forEach((k) => delete windowHandlers[k])
   Object.keys(documentHandlers).forEach((k) => delete documentHandlers[k])
@@ -402,6 +408,25 @@ describe('lockSession() (triggered via warning timer callback)', () => {
   })
 })
 
+  it('locks the native vault before reloading after inactivity', async () => {
+    withNoEncryption()
+    vi.mocked(secureStorage.usesNativeVault).mockReturnValue(true)
+    vi.mocked(secureStorage.isNativeVaultUnlocked).mockReturnValue(true)
+    const callbacks: (() => void)[] = []
+    mockWindow.setTimeout.mockImplementation((fn: () => void) => {
+      callbacks.push(fn)
+      return callbacks.length
+    })
+
+    const { resetInactivityTimer } = useSessionTimeout()
+    resetInactivityTimer()
+    callbacks[0]()
+    callbacks[1]()
+    await Promise.resolve()
+
+    expect(vi.mocked(secureStorage.lockNativeVault)).toHaveBeenCalledOnce()
+    expect(mockLocation.reload).toHaveBeenCalled()
+  })
 // ── handleVisibilityChange() ──────────────────────────────────────────────────
 
 describe('handleVisibilityChange()', () => {

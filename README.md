@@ -10,7 +10,7 @@ PrintChecks is a fork of PrintMeChecks that dramatically expands its capabilitie
 
 ## 🌟 Why PrintChecks?
 
-**Privacy First**: Other check printing services charge $1.25+ per check and require you to upload sensitive banking information to third-party servers. PrintChecks runs entirely in your browser—no data ever leaves your computer.
+**Privacy First**: Other check printing services charge $1.25+ per check and require you to upload sensitive banking information to third-party servers. PrintChecks runs entirely in your browser. Its production runtime bundles its dependencies, disables remote fonts, and permits only same-origin browser requests.
 
 **Business Ready**: Manage multiple bank accounts, track vendors, generate professional receipts, and access comprehensive payment analytics—all from one local tool.
 
@@ -66,7 +66,7 @@ PrintChecks is a fork of PrintMeChecks that dramatically expands its capabilitie
 ### 🔒 Privacy & Security
 
 - **100% Local**: All processing happens in your browser
-- **No Network Requests**: Zero external server communication
+- **No External Runtime Requests**: A Content Security Policy permits only same-origin browser requests
 - **Local Storage**: Data stays on your computer
 - **No Tracking**: No analytics, cookies, or user tracking
 - **Open Source**: Audit the code yourself

@@ -1,12 +1,14 @@
 /**
- * Secure Storage Service
- * Transparently encrypts/decrypts data stored in localStorage
+ * Storage service for application data.
+ *
+ * The desktop app stores sensitive records in the native encrypted vault. The
+ * browser implementation remains only for the web build and legacy migration.
  */
 
-import { encrypt, decrypt, isEncrypted } from './encryption'
+import { invoke } from '@tauri-apps/api/core'
+import { decrypt, encrypt, isEncrypted } from './encryption'
 
-// Keys that should be encrypted when encryption is enabled
-const SENSITIVE_KEYS = [
+export const SENSITIVE_KEYS = [
   'checkList',
   'printchecks_receipts',
   'printchecks_payments',
@@ -17,302 +19,206 @@ const SENSITIVE_KEYS = [
   'printchecks_customization',
   'printchecks_presets',
   'printchecks_settings'
-]
+] as const
 
-// Metadata keys (not encrypted)
 const METADATA_KEYS = ['encryption_enabled', 'encryption_test', 'encryption_migration_complete']
+
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+function serialized(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+interface VaultOpenResult {
+  recovery_key: string | null
+}
 
 class SecureStorage {
   private password: string | null = null
   private encryptionEnabled = false
+  private nativeVaultUnlocked = false
+
+  usesNativeVault(): boolean {
+    return isTauriRuntime()
+  }
+
+  isNativeVaultUnlocked(): boolean {
+    return this.usesNativeVault() && this.nativeVaultUnlocked
+  }
+
+  async nativeVaultExists(): Promise<boolean> {
+    if (!this.usesNativeVault()) return false
+    return invoke<boolean>('vault_exists')
+  }
+
+  async createNativeVault(passphrase: string, confirmation: string): Promise<string> {
+    if (!this.usesNativeVault()) throw new Error('The native vault is only available in the desktop app')
+    // Validate legacy records before creating a vault. Otherwise a wrong old
+    // browser password could create a vault but prevent its recovery key from
+    // ever reaching the setup screen.
+    const legacyRecords = await this.readLegacyRecords(passphrase)
+    const recoveryKey = await invoke<string>('create_vault', {
+      passphrase,
+      confirmation,
+      initialData: Object.fromEntries(legacyRecords)
+    })
+    this.nativeVaultUnlocked = true
+    this.removeLegacyRecords(legacyRecords)
+    return recoveryKey
+  }
+
+  async unlockNativeVault(passphrase: string): Promise<string | null> {
+    if (!this.usesNativeVault()) throw new Error('The native vault is only available in the desktop app')
+    const result = await invoke<VaultOpenResult>('unlock_vault', { passphrase })
+    this.nativeVaultUnlocked = true
+    return result.recovery_key
+  }
+
+  async resetNativeVaultPassphrase(recoveryKey: string, passphrase: string, confirmation: string): Promise<void> {
+    if (!this.usesNativeVault()) throw new Error('The native vault is only available in the desktop app')
+    await invoke('reset_passphrase_with_recovery', { recoveryKey, passphrase, confirmation })
+    this.nativeVaultUnlocked = true
+  }
+
+  async lockNativeVault(): Promise<void> {
+    if (!this.usesNativeVault()) return
+    this.nativeVaultUnlocked = false
+    await invoke('vault_lock')
+  }
+  async startNewNativeVault(passphrase: string, confirmation: string): Promise<string> {
+    if (!this.usesNativeVault()) throw new Error('The native vault is only available in the desktop app')
+    const recoveryKey = await invoke<string>('start_new_vault', { passphrase, confirmation })
+    this.nativeVaultUnlocked = true
+    for (const key of SENSITIVE_KEYS) localStorage.removeItem(key)
+    for (const key of METADATA_KEYS) localStorage.removeItem(key)
+    return recoveryKey
+  }
+
+  private assertNativeVaultUnlocked(): void {
+    if (!this.nativeVaultUnlocked) throw new Error('Unlock the vault before accessing application data')
+  }
 
   /**
-   * Initialize the secure storage with a password
+   * Moves legacy browser records into the native vault. Values are decoded
+   * before browser data is removed, so a wrong password leaves them intact.
    */
+  private async readLegacyRecords(passphrase: string): Promise<Array<[string, string]>> {
+    const records: Array<[string, string]> = []
+
+    for (const key of SENSITIVE_KEYS) {
+      const rawValue = localStorage.getItem(key)
+      if (!rawValue) continue
+      const value = isEncrypted(rawValue) ? serialized(await decrypt(rawValue, passphrase)) : rawValue
+      records.push([key, value])
+    }
+
+    return records
+  }
+
+  private removeLegacyRecords(records: Array<[string, string]>): void {
+    for (const [key] of records) localStorage.removeItem(key)
+    for (const key of METADATA_KEYS) localStorage.removeItem(key)
+    sessionStorage.removeItem('encryption_password')
+  }
+
+  // Browser-only legacy encryption support.
   initialize(password: string | null = null) {
     this.password = password
     this.encryptionEnabled = localStorage.getItem('encryption_enabled') === 'true'
-    console.log('[SecureStorage] Initialized, encryption enabled:', this.encryptionEnabled)
   }
 
-  /**
-   * Update the password (used when password changes)
-   */
   updatePassword(newPassword: string) {
     this.password = newPassword
-    console.log('[SecureStorage] Password updated')
   }
 
-  /**
-   * Check if a key should be encrypted
-   */
   private shouldEncrypt(key: string): boolean {
-    return SENSITIVE_KEYS.includes(key) && !METADATA_KEYS.includes(key)
+    return (SENSITIVE_KEYS as readonly string[]).includes(key) && !METADATA_KEYS.includes(key)
   }
 
-  /**
-   * Get data from localStorage, automatically decrypting if needed
-   */
   async get(key: string): Promise<string | null> {
-    try {
-      const rawValue = localStorage.getItem(key)
-      if (!rawValue) {
-        return null
-      }
-
-      // Metadata keys are never encrypted
-      if (METADATA_KEYS.includes(key)) {
-        return rawValue
-      }
-
-      // Check if the data is encrypted
-      if (isEncrypted(rawValue)) {
-        if (!this.password) {
-          console.error('[SecureStorage] Cannot decrypt without password:', key)
-          throw new Error('Password required to decrypt data')
-        }
-
-        try {
-          const decrypted = await decrypt(rawValue, this.password)
-          return typeof decrypted === 'string' ? decrypted : JSON.stringify(decrypted)
-        } catch (error) {
-          console.error('[SecureStorage] Decryption failed for key:', key, error)
-          throw new Error(`Failed to decrypt ${key}. Wrong password or corrupted data.`, { cause: error })
-        }
-      }
-
-      // Data is not encrypted, return as-is (for backward compatibility)
-      return rawValue
-    } catch (error) {
-      console.error('[SecureStorage] Error getting key:', key, error)
-      throw error
+    if (this.usesNativeVault() && this.shouldEncrypt(key)) {
+      this.assertNativeVaultUnlocked()
+      return invoke<string | null>('vault_get', { key })
     }
+
+    const rawValue = localStorage.getItem(key)
+    if (!rawValue || METADATA_KEYS.includes(key) || !isEncrypted(rawValue)) return rawValue
+    if (!this.password) throw new Error('Password required to decrypt data')
+    return serialized(await decrypt(rawValue, this.password))
   }
 
-  /**
-   * Set data in localStorage, automatically encrypting if needed
-   */
   async set(key: string, value: unknown): Promise<void> {
-    try {
-      // Metadata keys are never encrypted
-      if (METADATA_KEYS.includes(key)) {
-        localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value))
-        return
-      }
-
-      // Check if we should encrypt this key
-      if (this.encryptionEnabled && this.shouldEncrypt(key) && this.password) {
-        try {
-          const encrypted = await encrypt(value, this.password)
-          localStorage.setItem(key, encrypted)
-          console.log('[SecureStorage] Encrypted and stored:', key)
-        } catch (error) {
-          console.error('[SecureStorage] Encryption failed for key:', key, error)
-          throw new Error(`Failed to encrypt ${key}`, { cause: error })
-        }
-      } else {
-        // Store as plain text
-        localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value))
-      }
-    } catch (error) {
-      console.error('[SecureStorage] Error setting key:', key, error)
-      throw error
+    const valueToStore = serialized(value)
+    if (this.usesNativeVault() && this.shouldEncrypt(key)) {
+      this.assertNativeVaultUnlocked()
+      await invoke('vault_set', { key, value: valueToStore })
+      return
+    }
+    if (METADATA_KEYS.includes(key)) {
+      localStorage.setItem(key, valueToStore)
+    } else if (this.encryptionEnabled && this.shouldEncrypt(key) && this.password) {
+      localStorage.setItem(key, await encrypt(value, this.password))
+    } else {
+      localStorage.setItem(key, valueToStore)
     }
   }
 
-  /**
-   * Remove a key from localStorage
-   */
   remove(key: string): void {
     localStorage.removeItem(key)
   }
 
-  /**
-   * Clear all data from localStorage
-   */
   clear(): void {
     localStorage.clear()
   }
 
-  /**
-   * Migrate existing plain text data to encrypted format
-   */
   async migrateToEncrypted(): Promise<void> {
-    if (!this.password) {
-      throw new Error('Password required for migration')
-    }
-
-    console.log('[SecureStorage] Starting migration to encrypted storage...')
-
-    const migrationErrors: string[] = []
-
-    for (const key of SENSITIVE_KEYS) {
-      try {
-        const rawValue = localStorage.getItem(key)
-        if (!rawValue) {
-          console.log(`[SecureStorage] Skipping ${key} - no data found`)
-          continue
-        }
-
-        // Skip if already encrypted
-        if (isEncrypted(rawValue)) {
-          console.log(`[SecureStorage] Skipping ${key} - already encrypted`)
-          continue
-        }
-
-        // Encrypt the data
-        console.log(`[SecureStorage] Encrypting ${key}...`)
-        const encrypted = await encrypt(rawValue, this.password)
-        localStorage.setItem(key, encrypted)
-        console.log(`[SecureStorage] ✓ Successfully encrypted ${key}`)
-      } catch (error) {
-        console.error(`[SecureStorage] Failed to migrate ${key}:`, error)
-        migrationErrors.push(key)
-      }
-    }
-
-    if (migrationErrors.length > 0) {
-      throw new Error(`Migration failed for keys: ${migrationErrors.join(', ')}`)
-    }
-
-    // Mark migration as complete
-    localStorage.setItem('encryption_migration_complete', 'true')
-    console.log('[SecureStorage] Migration completed successfully')
-  }
-
-  /**
-   * Migrate encrypted data back to plain text
-   */
-  async migrateToPlainText(): Promise<void> {
-    if (!this.password) {
-      throw new Error('Password required for decryption during migration')
-    }
-
-    console.log('[SecureStorage] Starting migration to plain text storage...')
-
-    const migrationErrors: string[] = []
-
-    for (const key of SENSITIVE_KEYS) {
-      try {
-        const rawValue = localStorage.getItem(key)
-        if (!rawValue) {
-          console.log(`[SecureStorage] Skipping ${key} - no data found`)
-          continue
-        }
-
-        // Skip if already plain text
-        if (!isEncrypted(rawValue)) {
-          console.log(`[SecureStorage] Skipping ${key} - already plain text`)
-          continue
-        }
-
-        // Decrypt the data
-        console.log(`[SecureStorage] Decrypting ${key}...`)
-        const decrypted = await decrypt(rawValue, this.password)
-        const plainText = typeof decrypted === 'string' ? decrypted : JSON.stringify(decrypted)
-        localStorage.setItem(key, plainText)
-        console.log(`[SecureStorage] ✓ Successfully decrypted ${key}`)
-      } catch (error) {
-        console.error(`[SecureStorage] Failed to migrate ${key}:`, error)
-        migrationErrors.push(key)
-      }
-    }
-
-    if (migrationErrors.length > 0) {
-      throw new Error(`Migration failed for keys: ${migrationErrors.join(', ')}`)
-    }
-
-    // Clear migration flag
-    localStorage.removeItem('encryption_migration_complete')
-    console.log('[SecureStorage] Migration to plain text completed successfully')
-  }
-
-  /**
-   * Re-encrypt all data with a new password
-   */
-  async reencryptWithNewPassword(oldPassword: string, newPassword: string): Promise<void> {
-    console.log('[SecureStorage] Starting re-encryption with new password...')
-
-    const reencryptErrors: string[] = []
-
-    for (const key of SENSITIVE_KEYS) {
-      try {
-        const rawValue = localStorage.getItem(key)
-        if (!rawValue) {
-          continue
-        }
-
-        // Skip if not encrypted
-        if (!isEncrypted(rawValue)) {
-          continue
-        }
-
-        // Decrypt with old password
-        console.log(`[SecureStorage] Re-encrypting ${key}...`)
-        const decrypted = await decrypt(rawValue, oldPassword)
-
-        // Encrypt with new password
-        const encrypted = await encrypt(decrypted, newPassword)
-        localStorage.setItem(key, encrypted)
-        console.log(`[SecureStorage] ✓ Successfully re-encrypted ${key}`)
-      } catch (error) {
-        console.error(`[SecureStorage] Failed to re-encrypt ${key}:`, error)
-        reencryptErrors.push(key)
-      }
-    }
-
-    if (reencryptErrors.length > 0) {
-      throw new Error(`Re-encryption failed for keys: ${reencryptErrors.join(', ')}`)
-    }
-
-    console.log('[SecureStorage] Re-encryption completed successfully')
-  }
-
-  /**
-   * Check if migration is needed
-   */
-  needsMigration(): boolean {
-    const encryptionEnabled = localStorage.getItem('encryption_enabled') === 'true'
-    const migrationComplete = localStorage.getItem('encryption_migration_complete') === 'true'
-
-    if (!encryptionEnabled) {
-      return false
-    }
-
-    // Check if any sensitive keys exist in plain text
+    if (!this.password) throw new Error('Password required for migration')
     for (const key of SENSITIVE_KEYS) {
       const rawValue = localStorage.getItem(key)
-      if (rawValue && !isEncrypted(rawValue)) {
-        return true
-      }
+      if (rawValue && !isEncrypted(rawValue)) localStorage.setItem(key, await encrypt(rawValue, this.password))
     }
-
-    return !migrationComplete
+    localStorage.setItem('encryption_migration_complete', 'true')
   }
 
-  /**
-   * Get storage statistics
-   */
+  async migrateToPlainText(): Promise<void> {
+    if (!this.password) throw new Error('Password required for migration')
+    for (const key of SENSITIVE_KEYS) {
+      const rawValue = localStorage.getItem(key)
+      if (rawValue && isEncrypted(rawValue)) localStorage.setItem(key, serialized(await decrypt(rawValue, this.password)))
+    }
+    localStorage.removeItem('encryption_migration_complete')
+  }
+
+  async reencryptWithNewPassword(oldPassword: string, newPassword: string): Promise<void> {
+    for (const key of SENSITIVE_KEYS) {
+      const rawValue = localStorage.getItem(key)
+      if (!rawValue || !isEncrypted(rawValue)) continue
+      localStorage.setItem(key, await encrypt(await decrypt(rawValue, oldPassword), newPassword))
+    }
+    this.password = newPassword
+  }
+
+  needsMigration(): boolean {
+    if (!this.encryptionEnabled) return false
+    return SENSITIVE_KEYS.some((key) => {
+      const rawValue = localStorage.getItem(key)
+      return Boolean(rawValue && !isEncrypted(rawValue))
+    }) || localStorage.getItem('encryption_migration_complete') !== 'true'
+  }
+
   getStats(): { total: number; encrypted: number; plainText: number } {
     let total = 0
     let encrypted = 0
-    let plainText = 0
-
     for (const key of SENSITIVE_KEYS) {
       const rawValue = localStorage.getItem(key)
-      if (rawValue) {
-        total++
-        if (isEncrypted(rawValue)) {
-          encrypted++
-        } else {
-          plainText++
-        }
-      }
+      if (!rawValue) continue
+      total++
+      if (isEncrypted(rawValue)) encrypted++
     }
-
-    return { total, encrypted, plainText }
+    return { total, encrypted, plainText: total - encrypted }
   }
 }
 
-// Export singleton instance
 export const secureStorage = new SecureStorage()

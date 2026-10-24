@@ -141,6 +141,21 @@ onMounted(async () => {
 // Filter out voided checks from payment history
 const paymentHistory = computed(() => filterActiveChecks(checkList.value))
 
+// Check dates are stored as calendar dates. Parsing `YYYY-MM-DD` with the
+// Date constructor treats it as midnight UTC, which moves it into the prior
+// day for users west of Greenwich and can put a payment in the wrong month.
+function parseCheckDate(value: string | Date): Date {
+  if (value instanceof Date) return value
+
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (isoDate) {
+    const [, year, month, day] = isoDate
+    return new Date(Number(year), Number(month) - 1, Number(day))
+  }
+
+  return new Date(value)
+}
+
 // Enhanced Statistics
 const enhancedStats = computed(() => {
   const now = new Date()
@@ -148,12 +163,12 @@ const enhancedStats = computed(() => {
   const currentYear = now.getFullYear()
 
   const thisMonthPayments = paymentHistory.value.filter((payment) => {
-    const paymentDate = new Date(payment.date)
+    const paymentDate = parseCheckDate(payment.date)
     return paymentDate.getMonth() === currentMonth && paymentDate.getFullYear() === currentYear
   })
 
   const lastMonthPayments = paymentHistory.value.filter((payment) => {
-    const paymentDate = new Date(payment.date)
+    const paymentDate = parseCheckDate(payment.date)
     const lastMonth = currentMonth === 0 ? 11 : currentMonth - 1
     const lastMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear
     return paymentDate.getMonth() === lastMonth && paymentDate.getFullYear() === lastMonthYear

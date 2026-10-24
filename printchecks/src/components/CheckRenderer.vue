@@ -15,6 +15,8 @@
       :style="{
         ...checkStyles.accountHolderName,
         position: 'absolute',
+        fontSize: '16px',
+        fontWeight: 'normal',
         ...dynamicTextPositions.accountHolderAddress
       }"
     >
@@ -37,10 +39,12 @@
       :style="{
         ...checkStyles.bankName,
         position: 'absolute',
-        top: '50px',
-        left: '0px',
-        width: '100%',
-        textAlign: 'center'
+        fontSize: '16px',
+        fontWeight: 'bold',
+        top: '290px',
+        left: '60px',
+        width: '500px',
+        textAlign: 'left'
       }"
     >
       {{ checkData.bankName }}
@@ -50,10 +54,12 @@
       :style="{
         ...checkStyles.bankName,
         position: 'absolute',
-        top: '70px',
-        left: '0px',
-        width: '100%',
-        textAlign: 'center'
+        fontSize: '14px',
+        fontWeight: 'normal',
+        top: '315px',
+        left: '60px',
+        width: '500px',
+        textAlign: 'left'
       }"
     >
       {{ checkData.bankAddress || '' }}
@@ -62,7 +68,7 @@
       class="date-data"
       :style="{ ...checkStyles.date, position: 'absolute', ...dynamicTextPositions.date }"
     >
-      {{ checkData.date }}
+      {{ formatCheckDate(checkData.date) }}
     </div>
     <!-- Date line -->
     <div
@@ -266,11 +272,9 @@
         textAlign: 'center'
       }"
     >
-      <div class="routing" style="display: inline">⑆{{ checkData.routingNumber }}⑆ </div>
-      <div class="bank-account" style="display: inline">{{ checkData.bankAccountNumber }}⑈ </div>
-      <div class="check-number" style="display: inline">
-        {{ checkData.checkNumber }}
-      </div>
+      <span class="auxiliary-on-us">⑈{{ checkData.checkNumber }}⑈</span><span class="routing"
+        >⑆{{ checkData.routingNumber }}⑆</span
+      ><span class="bank-account">{{ checkData.bankAccountNumber }}⑈</span>
     </div>
 
     <!-- Logo Section -->
@@ -337,6 +341,11 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   scale: 1
 })
+
+function formatCheckDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  return match ? `${match[2]}-${match[3]}-${match[1]}` : date
+}
 
 const line = ref<HTMLElement | null>(null)
 const calculatedLineLength = ref<number>(props.checkData.lineLength || 0)
@@ -563,6 +572,12 @@ const checkStyles = computed<Record<string, any>>(() => {
 <style scoped>
 .check-renderer {
   display: inline-block;
+}
+
+.banking .auxiliary-on-us,
+.banking .routing {
+  display: inline-block;
+  margin-right: 0.12in;
 }
 
 .logo-container {

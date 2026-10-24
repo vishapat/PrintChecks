@@ -282,6 +282,34 @@
           <strong>✅ Check Ready!</strong> Review the check preview below, then save or print.
         </div>
 
+        <div v-if="missingMicrInfo" class="alert alert-warning mb-4" role="alert">
+          <strong>Routing and account information are missing from this saved check.</strong>
+          <label class="form-label d-block mt-2" for="reprintBankSelect">
+            Select the bank account to use for this reprint
+          </label>
+          <select
+            id="reprintBankSelect"
+            v-model="reprintBankId"
+            class="form-select"
+            @change="applyReprintBank"
+          >
+            <option value="">Choose Bank Account...</option>
+            <option v-for="bank in bankAccounts" :key="bank.id" :value="bank.id">
+              {{ bank.name }} (****{{ bank.accountNumber.slice(-4) }})
+            </option>
+          </select>
+        </div>
+
+        <div class="paper-profile-control mx-auto mb-3 text-start">
+          <label class="form-label" for="paperProfile">Check paper profile</label>
+          <select id="paperProfile" v-model="selectedPaperProfile" class="form-select">
+            <option v-for="profile in paperProfiles" :key="profile.id" :value="profile.id">
+              {{ profile.name }}
+            </option>
+          </select>
+          <small class="text-muted">{{ paperProfile.description }}</small>
+        </div>
+
         <!-- Buttons -->
         <div class="d-flex gap-3 justify-content-center">
           <!-- Save button - only show if not saved -->
@@ -304,6 +332,17 @@
             🖨️ {{ check.isSaved ? 'Reprint Check (Ctrl + P)' : 'Print Check (Ctrl + P)' }}
           </button>
         </div>
+        <div class="form-check d-flex justify-content-center align-items-center gap-2 mt-3">
+          <input
+            id="include-payment-summary"
+            v-model="includePaymentSummaryInPrint"
+            class="form-check-input"
+            type="checkbox"
+          />
+          <label class="form-check-label" for="include-payment-summary">
+            Include historical payment summary when printing
+          </label>
+        </div>
         <div class="mt-3">
           <small class="text-muted">{{
             check.isSaved
@@ -318,16 +357,30 @@
   <!-- CHECK PREVIEW - Shown when check is created (outside form-container for printing) -->
   <div v-if="check.payTo && check.amount > 0">
     <!-- MAIN PRINT CONTAINER - All 3 sections in one div -->
-    <div class="print-container" id="print-container">
+    <div
+      class="print-container"
+      :class="{ 'without-payment-summary': !includePaymentSummaryInPrint }"
+      id="print-container"
+    >
       <!-- SECTION 1: Check (Top Third) -->
       <div class="check-section">
-        <div class="check-box" id="check-box">
+        <div
+          class="check-box"
+          :class="{
+            'versacheck-1000-preview': selectedPaperProfile === 'versacheck-1000',
+            'versacheck-1000-center-preview': selectedPaperProfile === 'versacheck-1000-center',
+            'checkomatic-top-preview': selectedPaperProfile === 'checkomatic-top',
+            'checkomatic-top-center-preview': selectedPaperProfile === 'checkomatic-top-center'
+          }"
+          id="check-box"
+        >
           <div style="position: relative" id="check-box-print">
             <div
               class="account-holder-name"
               :style="{
                 ...checkStyles.accountHolderName,
                 position: 'absolute',
+                fontSize: usesWindowedAddressLayout ? '16px' : undefined,
                 ...dynamicTextPositions.accountHolderName
               } as any"
             >
@@ -338,12 +391,20 @@
               :style="{
                 ...checkStyles.accountHolderName,
                 position: 'absolute',
+                fontSize: usesWindowedAddressLayout ? '13px' : '16px',
+                fontWeight: 'normal',
                 ...dynamicTextPositions.accountHolderAddress
               } as any"
             >
               {{ check.accountHolderAddress }}<br />
               {{ check.accountHolderCity }}, {{ check.accountHolderState }}
               {{ check.accountHolderZip }}
+            </div>
+            <div
+              v-if="usesWindowedAddressLayout && payeeWindowText"
+              class="vendor-window-address"
+            >
+              {{ payeeWindowText }}
             </div>
             <div
               class="check-number-human"
@@ -360,10 +421,12 @@
               :style="{
                 ...checkStyles.bankName,
                 position: 'absolute',
-                top: '50px',
-                left: '0px',
-                width: '100%',
-                textAlign: 'center'
+                fontSize: '16px',
+                fontWeight: 'bold',
+                top: usesWindowedAddressLayout ? '42px' : '290px',
+                left: usesWindowedAddressLayout ? '470px' : '60px',
+                width: usesWindowedAddressLayout ? '330px' : '500px',
+                textAlign: usesWindowedAddressLayout ? 'center' : 'left'
               } as any"
             >
               {{ check.bankName }}
@@ -373,10 +436,12 @@
               :style="{
                 ...checkStyles.bankName,
                 position: 'absolute',
-                top: '70px',
-                left: '0px',
-                width: '100%',
-                textAlign: 'center'
+                fontSize: '14px',
+                fontWeight: 'normal',
+                top: usesWindowedAddressLayout ? '67px' : '315px',
+                left: usesWindowedAddressLayout ? '470px' : '60px',
+                width: usesWindowedAddressLayout ? '330px' : '500px',
+                textAlign: usesWindowedAddressLayout ? 'center' : 'left'
               } as any"
             >
               {{ check.bankAddress || '' }}
@@ -385,19 +450,20 @@
               class="date-data"
               :style="{ ...checkStyles.date, position: 'absolute', ...dynamicTextPositions.date } as any"
             >
-              {{ check.date }}
+              {{ formatCheckDate(check.date) }}
             </div>
             <div
-              class="date"
+              class="date-label"
               :style="{
                 ...checkStyles.fieldLabels,
                 position: 'absolute',
-                top: '90px',
+                top: '88px',
                 left: '780px'
               } as any"
             >
-              Date: _____________________
+              Date:
             </div>
+            <div class="date-line" aria-hidden="true"></div>
             <div
               class="amount-box-border"
               style="
@@ -446,8 +512,9 @@
                 left: '60px'
               } as any"
             >
-              Pay to the <br />Order of: <span class="payto-line"></span>
+              Pay to the <br />Order of:
             </div>
+            <div class="payee-line" aria-hidden="true"></div>
             <div
               class="amount-line-data"
               ref="line"
@@ -460,6 +527,13 @@
               ***
               <span v-html="toWords(check.amount)"></span>
               ***
+            </div>            <div
+              v-if="usesWindowedAddressLayout"
+              class="versa-amount-words"
+            >
+              <span>*** <span v-html="toWords(check.amount)"></span> ***</span>
+              <span class="versa-amount-dots" aria-hidden="true"></span>
+              <span class="versa-amount-dollars">Dollars</span>
             </div>
             <div
               class="amount-line"
@@ -510,7 +584,7 @@
                 left: '60px'
               } as any"
             >
-              Memo: ____________________________________
+              Memo:<span v-if="!usesWindowedAddressLayout"> ____________________________________</span>
             </div>
             <div
               class="signature-data"
@@ -525,22 +599,22 @@
             <div
               class="signature"
               :style="{
-                ...checkStyles.fieldLabels,
                 position: 'absolute',
-                top: '390px',
-                left: '750px'
+                top: '413px',
+                left: '750px',
+                width: '360px',
+                height: '1px',
+                borderBottom: '1px solid black'
               } as any"
-            >
-              _______________________________
-            </div>
+            ></div>
             <div
               class="signature-label"
               :style="{
                 ...checkStyles.fieldLabels,
                 position: 'absolute',
-                top: '410px',
-                left: '780px',
-                width: '300px',
+                top: '418px',
+                left: '750px',
+                width: '360px',
                 textAlign: 'center'
               } as any"
             >
@@ -556,11 +630,9 @@
                 textAlign: 'center'
               } as any"
             >
-              <div class="routing" style="display: inline">a{{ check.routingNumber }}a</div>
-              <div class="bank-account" style="display: inline">{{ check.bankAccountNumber }}c</div>
-              <div class="check-number" style="display: inline; margin-left: 20px">
-                {{ check.checkNumber }}
-              </div>
+              <span class="auxiliary-on-us">c{{ check.checkNumber }}c</span><span class="routing"
+                >a{{ micrRoutingNumber }}a</span
+              ><span class="bank-account">{{ micrAccountNumber }}c</span>
             </div>
 
             <!-- Logo Section -->
@@ -932,11 +1004,17 @@ import BankAccountModal from './BankAccountModal.vue'
 import VendorModal from './VendorModal.vue'
 import { secureStorage } from '../services/secureStorage'
 import type { Vendor, BankAccount, PaymentRecord, FontSettings, LineItem } from '@/types'
+import { payeeTopForProfile, type PaperProfileId } from '@/utils/paperProfiles'
 
 
 const state = useAppStore()
 const customizationStore = useCustomizationStore()
 const historyStore = useHistoryStore()
+
+function formatCheckDate(date: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  return match ? `${match[2]}-${match[3]}-${match[1]}` : date
+}
 
 // Debug mode flag - ONLY enabled when npm run dev:clear is used
 // Check for VITE_DEBUG_MODE environment variable set by clear-history.js script
@@ -1021,6 +1099,48 @@ const bankAccounts = ref<BankAccount[]>([])
 const selectedBankId = ref('')
 const vendors = ref<Vendor[]>([])
 const selectedVendorId = ref('')
+const includePaymentSummaryInPrint = ref(false)
+const reprintBankId = ref('')
+
+const paperProfiles = [
+  {
+    id: 'generic-blank-top' as const,
+    name: 'Generic blank business check — top voucher',
+    description: 'Plain 8.5 × 11-inch stock with a 8.5 × 3.5-inch check at the top.'
+  },
+  {
+    id: 'versacheck-1000' as const,
+    name: 'VersaCheck Form #1000 — blue business voucher',
+    description:
+      'Top 8.5 × 3.5-inch check on blue security stock. The blue safe area is preprinted and will not be printed by the app.'
+  },
+  {
+    id: 'versacheck-1000-center' as const,
+    name: 'VersaCheck 2 — centered bank identity',
+    description:
+      'Experimental VersaCheck layout: the bank name and address are centered at the top of the blue security area.'
+  },
+  {
+    id: 'checkomatic-top' as const,
+    name: 'CheckOMatic — top business voucher',
+    description:
+      'Uses the VersaCheck field alignment, with the MICR line calibrated 2.5mm lower for CheckOMatic stock.'
+  },
+  {
+    id: 'checkomatic-top-center' as const,
+    name: 'CheckOMatic 2 — centered bank and address windows',
+    description:
+      'Plain windowed CheckOMatic layout with centered bank identity, return and recipient addresses, and the CheckOMatic MICR calibration.'
+  }
+]
+const selectedPaperProfile = ref<PaperProfileId>('generic-blank-top')
+const paperProfile = computed(
+  () => paperProfiles.find((profile) => profile.id === selectedPaperProfile.value) ?? paperProfiles[0]
+)
+const usesWindowedAddressLayout = computed(() =>
+  selectedPaperProfile.value === 'versacheck-1000-center' ||
+  selectedPaperProfile.value === 'checkomatic-top-center'
+)
 
 // Quick Check Modal
 const showQuickCheckModal = ref(false)
@@ -1078,6 +1198,47 @@ function removeLineItem(index: number) {
 // Computed properties for bank and vendor selection
 const selectedBank = computed(() => bankAccounts.value.find((b) => b.id === selectedBankId.value))
 const selectedVendor = computed(() => vendors.value.find((v) => v.id === selectedVendorId.value))
+const normalizedBankName = (name: string) => name.toLocaleLowerCase().replace(/[^a-z0-9]/g, '')
+const payeeWindowText = computed(() => {
+  if (!usesWindowedAddressLayout.value) return ''
+  const vendor = selectedVendor.value || vendors.value.find((item) => item.name === check.payTo)
+  if (!vendor) return check.payTo || ''
+  return [vendor.name, ...vendor.address.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)]
+    .slice(0, 3)
+    .join('\n')
+})
+
+
+// History records created by earlier releases did not always retain the MICR
+// values. Resolve them from the saved bank account whenever a check is reopened.
+const reprintBank = computed(() => {
+  const explicitlySelected = bankAccounts.value.find((bank) => bank.id === reprintBankId.value)
+  if (explicitlySelected) return explicitlySelected
+
+  const matchingName = normalizedBankName(check.bankName || '')
+  const matchingBank = bankAccounts.value.find(
+    (bank) => normalizedBankName(bank.name) === matchingName
+  )
+  return matchingBank || bankAccounts.value.find((bank) => bank.isDefault) || bankAccounts.value[0]
+})
+
+const micrRoutingNumber = computed(() => check.routingNumber || reprintBank.value?.routingNumber || '')
+const micrAccountNumber = computed(() => check.bankAccountNumber || reprintBank.value?.accountNumber || '')
+const missingMicrInfo = computed(() => !micrRoutingNumber.value || !micrAccountNumber.value)
+
+function applyReprintBank() {
+  const bank = reprintBank.value
+  if (!bank) return
+
+  check.bankName = check.bankName || bank.name
+  check.routingNumber = bank.routingNumber || ''
+  check.bankAccountNumber = bank.accountNumber || ''
+}
+
+function restoreMicrFromBank() {
+  if (!check.routingNumber) check.routingNumber = micrRoutingNumber.value
+  if (!check.bankAccountNumber) check.bankAccountNumber = micrAccountNumber.value
+}
 
 // Auto-calculate next check number based on selected bank
 const nextCheckNumber = computed(() => {
@@ -1101,11 +1262,11 @@ const dynamicTextPositions = computed(() => {
   if (!hasCustomLogo.value || !logo) {
     // Return default positions when no logo
     return {
-      accountHolderName: { top: '40px', left: '60px' },
-      accountHolderAddress: { top: '70px', left: '60px' },
+      accountHolderName: { top: usesWindowedAddressLayout.value ? '35px' : '40px', left: usesWindowedAddressLayout.value ? '55px' : '60px' },
+      accountHolderAddress: { top: usesWindowedAddressLayout.value ? '55px' : '70px', left: usesWindowedAddressLayout.value ? '55px' : '60px' },
       checkNumber: { top: '40px', right: '50px' },
-      date: { top: '90px', left: '850px' },
-      payTo: { top: '200px', left: '180px' },
+      date: { top: '82px', left: '850px' },
+      payTo: { top: payeeTopForProfile(selectedPaperProfile.value), left: '180px' },
       amount: { top: '202px', left: '970px' },
       amountWords: { top: '240px', left: '100px' },
       bankName: { top: '300px', left: '60px' },
@@ -1167,11 +1328,11 @@ const dynamicTextPositions = computed(() => {
     string,
     { top?: string; left?: string; right?: string; bottom?: string; textAlign?: string }
   > = {
-    accountHolderName: { top: '40px', left: '60px' },
-    accountHolderAddress: { top: '70px', left: '60px' },
+    accountHolderName: { top: usesWindowedAddressLayout.value ? '35px' : '40px', left: usesWindowedAddressLayout.value ? '55px' : '60px' },
+    accountHolderAddress: { top: usesWindowedAddressLayout.value ? '55px' : '70px', left: usesWindowedAddressLayout.value ? '55px' : '60px' },
     checkNumber: { top: '40px', right: '50px' },
-    date: { top: '90px', left: '850px' },
-    payTo: { top: '200px', left: '180px' },
+    date: { top: '82px', left: '850px' },
+    payTo: { top: payeeTopForProfile(selectedPaperProfile.value), left: '180px' },
     amount: { top: '202px', left: '970px' },
     amountWords: { top: '240px', left: '100px' },
     bankName: { top: '300px', left: '60px' },
@@ -1447,16 +1608,55 @@ async function printCheck() {
     return
   }
 
+  restoreMicrFromBank()
+
+  if (!check.routingNumber || !check.bankAccountNumber) {
+    alert('Cannot print: This check is missing routing or account information.')
+    return
+  }
+
+  // A reprint can recover MICR values from a saved bank account. Let Vue paint
+  // that recovery and make the local MICR font available before the WebView
+  // captures the document for the printer/PDF dialog.
+  await nextTick()
+  try {
+    await document.fonts.load('37px banking')
+  } catch {
+    // The CSS fallback font still makes the numbers printable if a font load fails.
+  }
+
   // Only save to history on first print
   if (!check.isPrinted) {
     await saveToHistory()
     check.isPrinted = true
   }
 
+  const securityVoucherPrintCalibration =
+    selectedPaperProfile.value === 'versacheck-1000' || selectedPaperProfile.value === 'versacheck-1000-center' || selectedPaperProfile.value === 'checkomatic-top' || selectedPaperProfile.value === 'checkomatic-top-center'
+      ? `
+        /* The check canvas is zoomed to 68%, so these internal offsets produce
+           the measured field adjustments for the selected security stock. */
+        #check-box-print .memo-data,
+        #check-box-print .memo {
+          transform: translateY(-6.617647mm) !important;
+        }
+        #check-box-print .signature,
+        #check-box-print .signature-label {
+          transform: translateY(-8.823529mm) !important;
+        }
+        #check-box-print .banking {
+          transform: translate(-13.235294mm, ${
+            selectedPaperProfile.value === 'checkomatic-top' || selectedPaperProfile.value === 'checkomatic-top-center' ? '-0.735294mm' : '-4.411765mm'
+          }) !important;
+        }
+      `
+      : ''
+
   const style = document.createElement('style')
   style.textContent = `
       @media print {
         @page {
+          size: letter portrait;
           margin: 0;
         }
         
@@ -1503,6 +1703,7 @@ async function printCheck() {
         .print-container {
           display: block !important;
           width: 100% !important;
+          height: 11in !important;
           margin: 0 !important;
           padding: 0 !important;
           background: white !important;
@@ -1515,10 +1716,10 @@ async function printCheck() {
           display: block !important;
         }
         
-        /* Section 1: Check (Top Third) */
+        /* Section 1: check stock is exactly 3.5 × 8.5 inches. */
         .check-section {
-          height: calc((100vh - 12mm) / 3) !important;
-          width: 100% !important;
+          height: 3.5in !important;
+          width: 8.5in !important;
           margin: 0 !important;
           padding: 0 !important;
           position: relative !important;
@@ -1526,28 +1727,49 @@ async function printCheck() {
         }
         
         .check-box {
-          height: 100% !important;
-          width: 100% !important;
+          height: 3.5in !important;
+          width: 8.5in !important;
           margin: 0 !important;
-          padding: 20px !important;
+          padding: 0 !important;
           background: white !important;
           border: none !important;
           box-shadow: none !important;
           position: relative !important;
+        }
+
+        .check-box.versacheck-1000-preview::before,
+        .check-box.checkomatic-top-preview::before {
+          content: none !important;
         }
         
         /* Hide background image on check during print */
         #check-box-print {
           background: none !important;
           background-image: none !important;
+          /* Scale the 1,200px design canvas to the 8.5in check width. Zoom
+             participates in layout; transform does not, which caused the
+             PDF compositor to paginate and clip the unscaled canvas. */
+          width: 1200px !important;
+          height: 500px !important;
+          zoom: 0.68 !important;
+          transform: none !important;
         }
+
+        .banking {
+          display: block !important;
+          visibility: visible !important;
+          color: #000 !important;
+        }
+
+        ${securityVoucherPrintCalibration}
         
-        /* Section 2: Payment Details (Middle Third) */
+        /* Section 2: first 3.5-inch record stub. */
         .payment-details-section {
-          height: calc((100vh - 12mm) / 3) !important;
+          height: 3.5in !important;
           width: 100% !important;
           margin: 0 !important;
-          padding: 20px !important;
+          padding: 0.2in !important;
+          box-sizing: border-box !important;
           background: white !important;
           position: relative !important;
         }
@@ -1568,12 +1790,17 @@ async function printCheck() {
           padding: 0 !important;
         }
         
-        /* Section 3: Payment Summary (Bottom Third) */
+        .without-payment-summary .payment-summary-section {
+          display: none !important;
+        }
+
+        /* Section 3: second, 4-inch record stub. */
         .payment-summary-section {
-          height: calc((100vh - 12mm) / 3) !important;
+          height: 4in !important;
           width: 100% !important;
           margin: 0 !important;
-          padding: 20px !important;
+          padding: 0.2in !important;
+          box-sizing: border-box !important;
           background: white !important;
           position: relative !important;
         }
@@ -1590,8 +1817,11 @@ async function printCheck() {
       }
     `
   document.head.appendChild(style)
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  })
+  window.addEventListener('afterprint', () => style.remove(), { once: true })
   window.print()
-  style.remove()
 }
 
 async function saveToHistory() {
@@ -1614,11 +1844,6 @@ async function saveToHistory() {
     isSaved: true, // Ensure saved status is preserved
     isPrinted: true // Ensure printed status is preserved
   }
-  if (DEBUG_MODE.value) {
-    console.log('Saving line items to history:', currentLineItems.value)
-    console.log('checkToSave:', checkToSave)
-  }
-
   // Add check to history store (handles saving to secure storage)
   await historyStore.addCheck(checkToSave)
 
@@ -1699,6 +1924,12 @@ watch(check, async () => {
   await nextTick(() => {
     check.lineLength = line.value?.clientWidth || 0
   })
+})
+
+watch(selectedPaperProfile, async (profile) => {
+  localStorage.setItem('printchecks_paper_profile', profile)
+  await nextTick()
+  check.lineLength = line.value?.getBoundingClientRect().width || 0
 })
 
 function handlePrintShortcut(event: KeyboardEvent) {
@@ -1900,6 +2131,17 @@ if (typeof window !== 'undefined') {
 }
 
 onMounted(async () => {
+  const savedPaperProfile = localStorage.getItem('printchecks_paper_profile')
+  if (
+    savedPaperProfile === 'generic-blank-top' ||
+    savedPaperProfile === 'versacheck-1000' ||
+    savedPaperProfile === 'versacheck-1000-center' ||
+    savedPaperProfile === 'checkomatic-top' ||
+    savedPaperProfile === 'checkomatic-top-center'
+  ) {
+    selectedPaperProfile.value = savedPaperProfile
+  }
+
   // Load bank accounts and vendors from encrypted storage
   await loadBankAndVendorData()
 
@@ -1914,10 +2156,6 @@ onMounted(async () => {
   }
 
   if (state.check) {
-    if (DEBUG_MODE.value) {
-      console.log('Loading check from history:', state.check)
-      console.log('Line items in loaded check:', state.check.lineItems)
-    }
     check.accountHolderName = state.check.accountHolderName
     check.accountHolderAddress = state.check.accountHolderAddress
     check.accountHolderCity = state.check.accountHolderCity
@@ -1933,18 +2171,22 @@ onMounted(async () => {
     check.payTo = state.check.payTo
     check.memo = state.check.memo
     check.signature = state.check.signature
-    check.routingNumber = state.check.routingNumber
-    check.bankAccountNumber = state.check.bankAccountNumber
+    // Older history entries may not contain these values. Prefer the bank whose
+    // name was saved with the check, then fall back to the default account.
+    const savedBankName = normalizedBankName(state.check.bankName || '')
+    const matchingBank =
+      bankAccounts.value.find((bank) => normalizedBankName(bank.name) === savedBankName) ||
+      bankAccounts.value.find((bank) => bank.isDefault) ||
+      bankAccounts.value[0]
+    reprintBankId.value = matchingBank?.id || ''
+    check.routingNumber = state.check.routingNumber || matchingBank?.routingNumber || ''
+    check.bankAccountNumber = state.check.bankAccountNumber || matchingBank?.accountNumber || ''
     check.isSaved = !!state.check.isSaved // Preserve saved status
     check.isPrinted = state.check.isPrinted || false // Preserve printed status
 
     // Restore line items if they exist
     if (state.check.lineItems && Array.isArray(state.check.lineItems)) {
       currentLineItems.value = state.check.lineItems
-      if (DEBUG_MODE.value) {
-        console.log('Restoring line items:', state.check.lineItems)
-        console.log('currentLineItems after restore:', currentLineItems.value)
-      }
     } else {
       if (DEBUG_MODE.value)
         console.warn('No line items found in loaded check or lineItems is not an array')
@@ -2075,12 +2317,33 @@ label {
 }
 .amount-line-data {
   text-transform: capitalize;
+  width: fit-content;
+  white-space: nowrap;
 }
 .date-data,
 .pay-to-data,
 .amount-data {
   font-size: 20px;
   font-weight: bold;
+}
+.date-data {
+  width: 155px;
+  text-align: center;
+}
+.date-line {
+  position: absolute;
+  top: 108px;
+  left: 850px;
+  width: 155px;
+  border-bottom: 1px solid black;
+}
+.payee-line {
+  position: absolute;
+  top: 210px;
+  left: 150px;
+  width: 790px;
+  border-bottom: 1px solid black;
+  border-right: 1px solid black;
 }
 .check-data {
   margin-top: 50px;
@@ -2122,6 +2385,128 @@ label {
   container-type: inline-size;
 }
 
+.paper-profile-control {
+  max-width: 460px;
+}
+
+/* Preview only: Form #1000 arrives with its blue security area already printed.
+   The print stylesheet removes this overlay so ink is placed on the real stock. */
+.check-box.versacheck-1000-preview,
+.check-box.checkomatic-top-preview {
+  background: #fff !important;
+}
+.check-box.versacheck-1000-preview::before,
+.check-box.checkomatic-top-preview::before {
+  content: '';
+  position: absolute;
+  inset: 18px 24px;
+  z-index: 0;
+  border: 7px solid #183f7f;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.6) 0 1px, transparent 1.5px) 0 0 / 10px 10px,
+    linear-gradient(135deg, #d6e1f2, #f9fbff 48%, #dbe6f5);
+}
+.check-box.versacheck-1000-preview #check-box-print,
+.check-box.checkomatic-top-preview #check-box-print {
+  background: none;
+  z-index: 1;
+}
+
+/* VersaCheck Form #1000 calibration: these fields sit close to the lower
+   edge of the printed blue panel, so keep them 6mm higher than plain stock. */
+.check-box.versacheck-1000-preview .memo-data,
+.check-box.versacheck-1000-preview .memo,
+.check-box.versacheck-1000-center-preview .memo-data,
+.check-box.versacheck-1000-center-preview .memo,
+.check-box.checkomatic-top-preview .memo-data,
+.check-box.checkomatic-top-preview .memo,
+.check-box.checkomatic-top-center-preview .memo-data,
+.check-box.checkomatic-top-center-preview .memo {
+  transform: translateY(-6.617647mm);
+}
+.check-box.versacheck-1000-preview .signature,
+.check-box.versacheck-1000-preview .signature-label,
+.check-box.versacheck-1000-center-preview .signature,
+.check-box.versacheck-1000-center-preview .signature-label,
+.check-box.checkomatic-top-preview .signature,
+.check-box.checkomatic-top-preview .signature-label,
+.check-box.checkomatic-top-center-preview .signature,
+.check-box.checkomatic-top-center-preview .signature-label {
+  transform: translateY(-8.823529mm);
+}
+
+/* Align the MICR account line and routing/transit symbol with Form #1000's
+   printed reference: 3mm up and 9mm left after the 68% canvas scale. */
+.check-box.versacheck-1000-preview .banking,
+.check-box.versacheck-1000-center-preview .banking {
+  transform: translate(-13.235294mm, -4.411765mm);
+}
+.check-box.versacheck-1000-center-preview .payee-line,
+.check-box.checkomatic-top-center-preview .payee-line {
+  top: 227px;
+}
+.check-box.versacheck-1000-center-preview .pay-to-data,
+.check-box.checkomatic-top-center-preview .pay-to-data {
+  font-size: 26px !important;
+  font-weight: 700 !important;
+}
+/* The VersaCheck sample leaves the payee and memo unruled and uses dot
+   leaders after the written amount. */
+.check-box.versacheck-1000-center-preview .payee-line,
+.check-box.versacheck-1000-center-preview .amount-line,
+.check-box.versacheck-1000-center-preview .amount-handdrawn-line,
+.check-box.checkomatic-top-center-preview .payee-line,
+.check-box.checkomatic-top-center-preview .amount-line,
+.check-box.checkomatic-top-center-preview .amount-handdrawn-line {
+  display: none;
+}
+.check-box.versacheck-1000-center-preview .amount-line-data,
+.check-box.checkomatic-top-center-preview .amount-line-data {
+  display: none;
+}
+.versa-amount-words {
+  position: absolute;
+  top: 240px;
+  left: 60px;
+  width: 840px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.versa-amount-dots {
+  flex: 1;
+  height: 6px;
+  min-width: 24px;
+  background-image: radial-gradient(circle, #2b2b2b 1.3px, transparent 1.6px);
+  background-size: 12px 6px;
+  background-position: center;
+}
+.versa-amount-dollars {
+  font-size: 18px;
+  font-weight: 400;
+}
+.vendor-window-address {
+  position: absolute;
+  top: 285px;
+  left: 105px;
+  width: 480px;
+  max-height: 58px;
+  overflow: hidden;
+  white-space: pre-line;
+  font-size: 16px;
+  line-height: 1.1;
+  font-weight: 500;
+}
+.check-box.checkomatic-top-preview .banking,
+.check-box.checkomatic-top-center-preview .banking {
+  transform: translate(-13.235294mm, -0.735294mm);
+}
+
 #check-box {
   width: 100%;
   height: 100%;
@@ -2147,6 +2532,11 @@ label {
   font-family: 'banking';
   font-size: 37px;
 }
+.banking .auxiliary-on-us,
+.banking .routing {
+  display: inline-block;
+  margin-right: 0.12in;
+}
 .dollar-line::after {
   content: 'Dollars';
   font-size: 18px;
@@ -2164,15 +2554,6 @@ label {
 .amount-handdrawn-line {
   filter: drop-shadow(0 0.3px 0.2px rgba(0, 0, 0, 0.2));
   pointer-events: none;
-}
-.payto-line {
-  width: 776px;
-  display: block;
-  border-bottom: 1px solid black;
-  margin-left: 73px;
-  border-right: 1px solid black;
-  height: 28px;
-  margin-top: -32px;
 }
 
 /* Logo positioning classes */

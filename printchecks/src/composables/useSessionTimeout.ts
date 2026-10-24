@@ -22,7 +22,7 @@ export function useSessionTimeout() {
   let lastActivityTime: number = Date.now()
 
   // Check if encryption is enabled - make it reactive
-  const encryptionEnabled = ref(localStorage.getItem('encryption_enabled') === 'true')
+  const encryptionEnabled = ref(secureStorage.usesNativeVault() || localStorage.getItem('encryption_enabled') === 'true')
 
   console.log('[SessionTimeout] Initial encryption status:', encryptionEnabled.value)
 
@@ -45,6 +45,12 @@ export function useSessionTimeout() {
     }, 1000)
   }
 
+  function hasActiveVaultSession(): boolean {
+    return secureStorage.usesNativeVault()
+      ? secureStorage.isNativeVaultUnlocked()
+      : !!sessionStorage.getItem('encryption_password')
+  }
+
   function lockSession() {
     isLocked.value = true
     showWarning.value = false
@@ -53,6 +59,11 @@ export function useSessionTimeout() {
     // Clear password from both sessionStorage and secureStorage
     sessionStorage.removeItem('encryption_password')
     secureStorage.initialize(null) // Clear password from secure storage
+
+    if (secureStorage.usesNativeVault()) {
+      void secureStorage.lockNativeVault().finally(() => window.location.reload())
+      return
+    }
 
     // Show lock screen overlay
     alert(
@@ -77,7 +88,7 @@ export function useSessionTimeout() {
       console.log('[SessionTimeout] Encryption not enabled, skipping timer')
       return
     }
-    if (!sessionStorage.getItem('encryption_password')) {
+    if (!hasActiveVaultSession()) {
       console.log('[SessionTimeout] No password in sessionStorage, skipping timer')
       return
     }
@@ -106,7 +117,7 @@ export function useSessionTimeout() {
   }
 
   function handleVisibilityChange() {
-    if (!encryptionEnabled.value || !sessionStorage.getItem('encryption_password')) {
+    if (!encryptionEnabled.value || !hasActiveVaultSession()) {
       return
     }
 
@@ -134,8 +145,8 @@ export function useSessionTimeout() {
   }
 
   function startSessionTimeout() {
-    const hasEncryption = localStorage.getItem('encryption_enabled') === 'true'
-    const hasPassword = !!sessionStorage.getItem('encryption_password')
+    const hasEncryption = encryptionEnabled.value
+    const hasPassword = hasActiveVaultSession()
 
     console.log('[SessionTimeout] Starting timeout check:', { hasEncryption, hasPassword })
 
@@ -185,7 +196,7 @@ export function useSessionTimeout() {
     console.log('[SessionTimeout] Encryption toggled:', isEnabled)
     encryptionEnabled.value = isEnabled
 
-    if (isEnabled && sessionStorage.getItem('encryption_password')) {
+    if (isEnabled && hasActiveVaultSession()) {
       console.log('[SessionTimeout] Encryption enabled, restarting timeout')
       stopSessionTimeout()
       startSessionTimeout()
@@ -200,6 +211,7 @@ export function useSessionTimeout() {
 
     // Listen for encryption password being set
     window.addEventListener('encryption-password-set', handlePasswordSet)
+    window.addEventListener('password-initialized', handlePasswordSet)
     // Listen for encryption state changes
     window.addEventListener('encryption-toggled', handleEncryptionToggled as EventListener)
 
@@ -209,6 +221,7 @@ export function useSessionTimeout() {
   onUnmounted(() => {
     console.log('[SessionTimeout] Component unmounted')
     window.removeEventListener('encryption-password-set', handlePasswordSet)
+    window.removeEventListener('password-initialized', handlePasswordSet)
     window.removeEventListener('encryption-toggled', handleEncryptionToggled as EventListener)
     stopSessionTimeout()
   })

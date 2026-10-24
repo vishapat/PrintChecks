@@ -9,6 +9,8 @@
     "build:vue": "pnpm --filter '@printchecks/vue' run build",
     "dev:core": "pnpm --filter '@printchecks/core' run dev",
     "dev:vue": "pnpm --filter '@printchecks/vue' run dev",
+    "app:dev": "npm --prefix printchecks run tauri:dev",
+    "app:web": "npm --prefix printchecks run dev",
     "type-check": "pnpm -r run type-check",
     "lint": "eslint .",
     "changeset": "changeset",
@@ -25,13 +27,13 @@
   "author": "Joshua Danford",
   "license": "MIT",
   "devDependencies": {
-    "@changesets/cli": "^2.30.0",
+    "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.1.0",
+    "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-vue": "^10.8.0",
-    "globals": "^17.0.0",
-    "typescript-eslint": "^8.57.2"
+    "eslint-plugin-vue": "^10.11.1",
+    "globals": "^17.13.0",
+    "typescript-eslint": "^8.72.0"
   },
   "pnpm": {
     "overrides": {
